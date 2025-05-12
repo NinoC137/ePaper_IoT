@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include "WiFi_BLE.h"
 #include "my_MPU6050.h"
-// #include "GUI_Driver.h"
+#include "GUI_Driver.h"
 
 #include "FreeRTOS.h"
 
@@ -27,15 +27,18 @@ void setup()
 
   pinMode(48, OUTPUT_OPEN_DRAIN);
 
+  
   GUILog_Mutex = xSemaphoreCreateMutex();
-
+  
   xTaskCreatePinnedToCore(IoTTaskThread, "IoTTask", 4096, NULL, 2, &IoTTaskHandle, 1);
-
+  
   xTaskCreatePinnedToCore(SensorTaskThread, "SensorTask", 4096, NULL, 2, &IoTTaskHandle, 0);
-
-  // xTaskCreatePinnedToCore(GUITaskThread, "GUITask", 4096, NULL, 1, &IoTTaskHandle, 0);
-
+  
+  xTaskCreatePinnedToCore(GUITaskThread, "GUITask", 4096, NULL, 1, &IoTTaskHandle, 0);
+  
   xTaskCreatePinnedToCore(SerialThread, "Serial", 1024*8, NULL, 1, &SerialHandle, 0);
+  
+  epaper_setup();
   // std::stringstream urlStream;
   // urlStream << "http://" << WiFi_Data.serverip << ":" << WiFi_Data.serverport;
   // Serial.printf("Try to connect %s\r\n",urlStream.str().c_str());
@@ -54,16 +57,16 @@ void SensorTaskThread(void *argument)
   }
 }
 
-// void GUITaskThread(void *argument)
-// {
-//   GUI_setup(); 
-//   for (;;)
-//   {
-//     SystemData_GUI();
-//     MPU6050_GUILog();
-//     vTaskDelay(500);
-//   }
-// }
+void GUITaskThread(void *argument)
+{
+  for (;;)
+  {
+    // Serial.println();
+    // Serial.printf("current busy io level: %d\r\n", digitalRead(14));
+    // Serial.println();
+    vTaskDelay(5);
+  }
+}
 
 void IoTTaskThread(void *argument)
 {

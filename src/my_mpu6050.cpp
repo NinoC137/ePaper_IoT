@@ -100,12 +100,12 @@ void MPU6050_getData()
     mpu.dmpGetQuaternion(&q, fifoBuffer);
     mpu.dmpGetGravity(&gravity, &q);
     mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-    Serial.print("yaw\t");
-    Serial.print(ypr[0] * 180 / M_PI);
-    Serial.print("pitch\t");
-    Serial.print(ypr[1] * 180 / M_PI);
-    Serial.print("roll\t");
-    Serial.println(ypr[2] * 180 / M_PI);
+    // Serial.print("yaw\t");
+    // Serial.print(ypr[0] * 180 / M_PI);
+    // Serial.print("pitch\t");
+    // Serial.print(ypr[1] * 180 / M_PI);
+    // Serial.print("roll\t");
+    // Serial.println(ypr[2] * 180 / M_PI);
   }
 }
 
@@ -125,9 +125,7 @@ void MPU6050_GUILog(){
 
   ss << "roll:  " << std::fixed << std::setprecision(2) << ypr[2] * 180 / M_PI << "\r";
   MPU_Log = ss.str();
-  GUI_logPrint(MPU_Log);
   ss.clear();
-  GUI_logPrint("----------------------\r");
 }
 
 void MPU6050_SendJSONPack(){

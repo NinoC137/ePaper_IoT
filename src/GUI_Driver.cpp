@@ -1,143 +1,546 @@
-// #include "GUI_Driver.h"
+// NOTE: this board uses "unusual" SPI pins and requires re-mapping of HW SPI to these pins in SPIClass
+//       this example shows how this can be done easily, updated for use with HSPI
+//
+// The Wavehare ESP32 Driver Board uses uncommon SPI pins for the FPC connector. It uses HSPI pins, but SCK and MOSI are swapped.
+// To use HW SPI with the ESP32 Driver Board, HW SPI pins need be re-mapped in any case. Can be done using either HSPI or VSPI.
+// Other SPI clients can either be connected to the same SPI bus as the e-paper, or to the other HW SPI bus, or through SW SPI.
+// The logical configuration would be to use the e-paper connection on HSPI with re-mapped pins, and use VSPI for other SPI clients.
+// VSPI with standard VSPI pins is used by the global SPI instance of the Arduino IDE ESP32 package.
 
-// #include <stdarg.h>
+// uncomment next line to use HSPI for EPD (and VSPI for SD), e.g. with Waveshare ESP32 Driver Board
+#define USE_HSPI_FOR_EPD
 
-// extern SemaphoreHandle_t GUILog_Mutex;
+// base class GxEPD2_GFX can be used to pass references or pointers to the display instance as parameter, uses ~1.2k more code
+// enable or disable GxEPD2_GFX base class
+#define ENABLE_GxEPD2_GFX 0
 
-// TFT_eSPI tft = TFT_eSPI();
+// uncomment next line to use class GFX of library GFX_Root instead of Adafruit_GFX
+//#include <GFX.h>
+// Note: if you use this with ENABLE_GxEPD2_GFX 1:
+//       uncomment it in GxEPD2_GFX.h too, or add #include <GFX.h> before any #include <GxEPD2_GFX.h>
 
-// // The scrolling area must be a integral multiple of TEXT_HEIGHT
-// #define TEXT_HEIGHT 16          // Height of text to be printed and scrolled
-// #define BOT_FIXED_AREA 0        // Number of lines in bottom fixed area (lines counted from bottom of screen)
-// #define TOP_FIXED_AREA 240 + 16 // Number of lines in top fixed area (lines counted from top of screen)
-// #define YMAX 480                // Bottom of screen area
+#include <GxEPD2_BW.h>
+#include <Fonts/FreeMonoBold9pt7b.h>
 
-// // The initial y coordinate of the top of the scrolling area
-// uint16_t yStart = TOP_FIXED_AREA;
-// // yArea must be a integral multiple of TEXT_HEIGHT
-// uint16_t yArea = YMAX - TOP_FIXED_AREA - BOT_FIXED_AREA;
-// // The initial y coordinate of the top of the bottom text line
-// uint16_t yDraw = YMAX - BOT_FIXED_AREA - TEXT_HEIGHT;
+// select the display class (only one), matching the kind of display panel
+#define GxEPD2_DISPLAY_CLASS GxEPD2_BW
+// select the display driver class (only one) for your  panel
+// #define GxEPD2_DRIVER_CLASS GxEPD2_270     // GDEW027W3   176x264, EK79652 (IL91874), (WFI0190CZ22)
+#define GxEPD2_DRIVER_CLASS GxEPD2_270_GDEY027T91 // GDEY027T91 176x264, SSD1680, (FB)
 
-// // Keep track of the drawing x coordinate
-// uint16_t xPos = 0;
+// somehow there should be an easier way to do this
+#define GxEPD2_BW_IS_GxEPD2_BW true
+#define IS_GxEPD(c, x) (c##x)
+#define IS_GxEPD2_BW(x) IS_GxEPD(GxEPD2_BW_IS_, x)
 
-// // For the byte we read from the serial port
-// byte data = 0;
+#if defined(ESP32)
+#define MAX_DISPLAY_BUFFER_SIZE 65536ul // e.g.
+#if IS_GxEPD2_BW(GxEPD2_DISPLAY_CLASS)
+#define MAX_HEIGHT(EPD) (EPD::HEIGHT <= MAX_DISPLAY_BUFFER_SIZE / (EPD::WIDTH / 8) ? EPD::HEIGHT : MAX_DISPLAY_BUFFER_SIZE / (EPD::WIDTH / 8))
+#endif
+GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> display(GxEPD2_DRIVER_CLASS(/*CS=*/ 10, /*DC=*/ 9, /*RST=*/ 11, /*BUSY=*/ 14));
+#endif
 
-// // A few test variables used during debugging
-// bool change_colour = 1;
-// bool selected = 1;
+// alternately you can copy the constructor from GxEPD2_display_selection.h of GxEPD_Example to here
+// and adapt it to the ESP32 Driver wiring, e.g.
+//GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(GxEPD2_154_D67(/*CS=*/ 15, /*DC=*/ 27, /*RST=*/ 26, /*BUSY=*/ 25)); // GDEH0154D67
 
-// // We have to blank the top line each time the display is scrolled, but this takes up to 13 milliseconds
-// // for a full width line, meanwhile the serial buffer may be filling... and overflowing
-// // We can speed up scrolling of short text lines by just blanking the character we drew
-// int blank[19]; // We keep all the strings pixel lengths to optimise the speed of the top line blanking
+// comment out unused bitmaps to reduce code space used
+#include "bitmaps/Bitmaps176x264.h" // 2.7"  b/w
 
-// int scroll_line();
+#if defined(ESP32) && defined(USE_HSPI_FOR_EPD)
+SPIClass hspi(HSPI);
+#endif
 
-// void setupScrollArea(uint16_t tfa, uint16_t bfa);
 
-// void scrollAddress(uint16_t vsp);
+// note for partial update window and setPartialWindow() method:
+// partial update window size and position is on byte boundary in physical x direction
+// the size is increased in setPartialWindow() if x or w are not multiple of 8 for even rotation, y or h for odd rotation
+// see also comment in GxEPD2_BW.h, GxEPD2_3C.h or GxEPD2_GFX.h for method setPartialWindow()
 
-// void GUI_setup()
-// {
-//     tft.init();
-//     tft.setRotation(0);
+const char HelloWorld[] = "Hello World!";
+const char HelloArduino[] = "Hello Arduino!";
+const char HelloEpaper[] = "Hello E-Paper!";
 
-//     tft.fillScreen(TFT_BLACK);
-//     //start-up log
-//     tft.setTextColor(TFT_WHITE, TFT_BLUE);
-//     tft.fillRect(0, 0, 320, 16, TFT_BLUE);
-//     tft.drawCentreString("System information - Nino", 160, 0, 2);
-    
-//     //system debug log
-//     tft.setTextColor(TFT_WHITE, TFT_BLUE);
-//     tft.fillRect(0, 240, 320, 16, TFT_BLUE);
-//     tft.drawCentreString(" System Log - Nino", 160, 240, 2);
+void helloWorld()
+{
+  //Serial.println("helloWorld");
+  display.setRotation(1);
+  display.setFont(&FreeMonoBold9pt7b);
+  display.setTextColor(GxEPD_BLACK);
+  int16_t tbx, tby; uint16_t tbw, tbh;
+  display.getTextBounds(HelloWorld, 0, 0, &tbx, &tby, &tbw, &tbh);
+  // center bounding box by transposition of origin:
+  uint16_t x = ((display.width() - tbw) / 2) - tbx;
+  uint16_t y = ((display.height() - tbh) / 2) - tby;
+  display.setFullWindow();
+  display.firstPage();
+  do
+  {
+    display.fillScreen(GxEPD_WHITE);
+    display.setCursor(x, y);
+    display.print(HelloWorld);
+  }
+  while (display.nextPage());
+  //Serial.println("helloWorld done");
+}
 
-//     // Change colour for scrolling zone text
-//     tft.setTextColor(TFT_WHITE, TFT_BLACK);
+void helloWorldForDummies()
+{
+  //Serial.println("helloWorld");
+  const char text[] = "Hello World!";
+  // most e-papers have width < height (portrait) as native orientation, especially the small ones
+  // in GxEPD2 rotation 0 is used for native orientation (most TFT libraries use 0 fix for portrait orientation)
+  // set rotation to 1 (rotate right 90 degrees) to have enough space on small displays (landscape)
+  display.setRotation(1);
+  // select a suitable font in Adafruit_GFX
+  display.setFont(&FreeMonoBold9pt7b);
+  // on e-papers black on white is more pleasant to read
+  display.setTextColor(GxEPD_BLACK);
+  // Adafruit_GFX has a handy method getTextBounds() to determine the boundary box for a text for the actual font
+  int16_t tbx, tby; uint16_t tbw, tbh; // boundary box window
+  display.getTextBounds(text, 0, 0, &tbx, &tby, &tbw, &tbh); // it works for origin 0, 0, fortunately (negative tby!)
+  // center bounding box by transposition of origin:
+  uint16_t x = ((display.width() - tbw) / 2) - tbx;
+  uint16_t y = ((display.height() - tbh) / 2) - tby;
+  // full window mode is the initial mode, set it anyway
+  display.setFullWindow();
+  // here we use paged drawing, even if the processor has enough RAM for full buffer
+  // so this can be used with any supported processor board.
+  // the cost in code overhead and execution time penalty is marginal
+  // tell the graphics class to use paged drawing mode
+  display.firstPage();
+  do
+  {
+    // this part of code is executed multiple times, as many as needed,
+    // in case of full buffer it is executed once
+    // IMPORTANT: each iteration needs to draw the same, to avoid strange effects
+    // use a copy of values that might change, don't read e.g. from analog or pins in the loop!
+    display.fillScreen(GxEPD_WHITE); // set the background to white (fill the buffer with value for white)
+    display.setCursor(x, y); // set the postition to start printing text
+    display.print(text); // print some text
+    // end of part executed multiple times
+  }
+  // tell the graphics class to transfer the buffer content (page) to the controller buffer
+  // the graphics class will command the controller to refresh to the screen when the last page has been transferred
+  // returns true if more pages need be drawn and transferred
+  // returns false if the last page has been transferred and the screen refreshed for panels without fast partial update
+  // returns false for panels with fast partial update when the controller buffer has been written once more, to make the differential buffers equal
+  // (for full buffered with fast partial update the (full) buffer is just transferred again, and false returned)
+  while (display.nextPage());
+  //Serial.println("helloWorld done");
+}
 
-//     // Setup scroll area
-//     setupScrollArea(TOP_FIXED_AREA, BOT_FIXED_AREA);
+void helloFullScreenPartialMode()
+{
+  //Serial.println("helloFullScreenPartialMode");
+  const char fullscreen[] = "full screen update";
+  const char fpm[] = "fast partial mode";
+  const char spm[] = "slow partial mode";
+  const char npm[] = "no partial mode";
+  display.setPartialWindow(0, 0, display.width(), display.height());
+  display.setRotation(1);
+  display.setFont(&FreeMonoBold9pt7b);
+  display.setTextColor(GxEPD_BLACK);
+  const char* updatemode;
+  if (display.epd2.hasFastPartialUpdate)
+  {
+    updatemode = fpm;
+  }
+  else if (display.epd2.hasPartialUpdate)
+  {
+    updatemode = spm;
+  }
+  else
+  {
+    updatemode = npm;
+  }
+  // do this outside of the loop
+  int16_t tbx, tby; uint16_t tbw, tbh;
+  // center update text
+  display.getTextBounds(fullscreen, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t utx = ((display.width() - tbw) / 2) - tbx;
+  uint16_t uty = ((display.height() / 4) - tbh / 2) - tby;
+  // center update mode
+  display.getTextBounds(updatemode, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t umx = ((display.width() - tbw) / 2) - tbx;
+  uint16_t umy = ((display.height() * 3 / 4) - tbh / 2) - tby;
+  // center HelloWorld
+  display.getTextBounds(HelloWorld, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t hwx = ((display.width() - tbw) / 2) - tbx;
+  uint16_t hwy = ((display.height() - tbh) / 2) - tby;
+  display.firstPage();
+  do
+  {
+    display.fillScreen(GxEPD_WHITE);
+    display.setCursor(hwx, hwy);
+    display.print(HelloWorld);
+    display.setCursor(utx, uty);
+    display.print(fullscreen);
+    display.setCursor(umx, umy);
+    display.print(updatemode);
+  }
+  while (display.nextPage());
+  //Serial.println("helloFullScreenPartialMode done");
+}
 
-//     for (byte i = 0; i < 18; i++)
-//         blank[i] = 0;
-// }
+void helloArduino()
+{
+  //Serial.println("helloArduino");
+  display.setRotation(1);
+  display.setFont(&FreeMonoBold9pt7b);
+  display.setTextColor(display.epd2.hasColor ? GxEPD_RED : GxEPD_BLACK);
+  int16_t tbx, tby; uint16_t tbw, tbh;
+  // align with centered HelloWorld
+  display.getTextBounds(HelloWorld, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t x = ((display.width() - tbw) / 2) - tbx;
+  // height might be different
+  display.getTextBounds(HelloArduino, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t y = ((display.height() / 4) - tbh / 2) - tby; // y is base line!
+  // make the window big enough to cover (overwrite) descenders of previous text
+  uint16_t wh = FreeMonoBold9pt7b.yAdvance;
+  uint16_t wy = (display.height() / 4) - wh / 2;
+  display.setPartialWindow(0, wy, display.width(), wh);
+  display.firstPage();
+  do
+  {
+    display.fillScreen(GxEPD_WHITE);
+    //display.drawRect(x, y - tbh, tbw, tbh, GxEPD_BLACK);
+    display.setCursor(x, y);
+    display.print(HelloArduino);
+  }
+  while (display.nextPage());
+  delay(1000);
+  Serial.println("helloArduino done");
+}
 
-// void GUI_logPrint(std::string logStr)
-// {
-//     xSemaphoreTake(GUILog_Mutex, portMAX_DELAY);
-//     for (char character : logStr)
-//     {
-//         char data = character;
-//         // If it is a CR or we are near end of line then scroll one line
-//         if (data == '\r' || xPos > 319)
-//         {
-//             xPos = 0;
-//             yDraw = scroll_line(); // It can take 13ms to scroll and blank 16 pixel lines
-//         }
-//         if (data > 31 && data < 128)
-//         {
-//             xPos += tft.drawChar(data, xPos, yDraw, 2);
-//             blank[(18 + (yStart - TOP_FIXED_AREA) / TEXT_HEIGHT) % 19] = xPos; // Keep a record of line lengths
-//         }
-//     }
-//     xSemaphoreGive(GUILog_Mutex);
-// }
+void helloEpaper()
+{
+  //Serial.println("helloEpaper");
+  display.setRotation(1);
+  display.setFont(&FreeMonoBold9pt7b);
+  display.setTextColor(display.epd2.hasColor ? GxEPD_RED : GxEPD_BLACK);
+  int16_t tbx, tby; uint16_t tbw, tbh;
+  // align with centered HelloWorld
+  display.getTextBounds(HelloWorld, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t x = ((display.width() - tbw) / 2) - tbx;
+  // height might be different
+  display.getTextBounds(HelloEpaper, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t y = (display.height() * 3 / 4) + tbh / 2; // y is base line!
+  // make the window big enough to cover (overwrite) descenders of previous text
+  uint16_t wh = FreeMonoBold9pt7b.yAdvance;
+  uint16_t wy = (display.height() * 3 / 4) - wh / 2;
+  display.setPartialWindow(0, wy, display.width(), wh);
+  display.firstPage();
+  do
+  {
+    display.fillScreen(GxEPD_WHITE);
+    display.setCursor(x, y);
+    display.print(HelloEpaper);
+  }
+  while (display.nextPage());
+  Serial.println("helloEpaper done");
+}
 
-// void GUI_sysPrint(int32_t x, int32_t y, const char* str, ...){
-//     char buffer[256];
-//     va_list args;
-//     va_start(args, str);
+void deepSleepTest()
+{
+  //Serial.println("deepSleepTest");
+  const char hibernating[] = "hibernating ...";
+  const char wokeup[] = "woke up";
+  const char from[] = "from deep sleep";
+  const char again[] = "again";
+  display.setRotation(1);
+  display.setFont(&FreeMonoBold9pt7b);
+  display.setTextColor(GxEPD_BLACK);
+  int16_t tbx, tby; uint16_t tbw, tbh;
+  // center text
+  display.getTextBounds(hibernating, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t x = ((display.width() - tbw) / 2) - tbx;
+  uint16_t y = ((display.height() - tbh) / 2) - tby;
+  display.setFullWindow();
+  display.firstPage();
+  do
+  {
+    display.fillScreen(GxEPD_WHITE);
+    display.setCursor(x, y);
+    display.print(hibernating);
+  }
+  while (display.nextPage());
+  display.hibernate();
+  delay(5000);
+  display.getTextBounds(wokeup, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t wx = (display.width() - tbw) / 2;
+  uint16_t wy = (display.height() / 3) + tbh / 2; // y is base line!
+  display.getTextBounds(from, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t fx = (display.width() - tbw) / 2;
+  uint16_t fy = (display.height() * 2 / 3) + tbh / 2; // y is base line!
+  display.firstPage();
+  do
+  {
+    display.fillScreen(GxEPD_WHITE);
+    display.setCursor(wx, wy);
+    display.print(wokeup);
+    display.setCursor(fx, fy);
+    display.print(from);
+  }
+  while (display.nextPage());
+  delay(5000);
+  display.getTextBounds(hibernating, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t hx = (display.width() - tbw) / 2;
+  uint16_t hy = (display.height() / 3) + tbh / 2; // y is base line!
+  display.getTextBounds(again, 0, 0, &tbx, &tby, &tbw, &tbh);
+  uint16_t ax = (display.width() - tbw) / 2;
+  uint16_t ay = (display.height() * 2 / 3) + tbh / 2; // y is base line!
+  display.firstPage();
+  do
+  {
+    display.fillScreen(GxEPD_WHITE);
+    display.setCursor(hx, hy);
+    display.print(hibernating);
+    display.setCursor(ax, ay);
+    display.print(again);
+  }
+  while (display.nextPage());
+  display.hibernate();
+  Serial.println("deepSleepTest done");
+}
 
-//     vsnprintf(buffer, sizeof(buffer), str, args);
-//     va_end(args);
+void showBox(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool partial)
+{
+  //Serial.println("showBox");
+  display.setRotation(1);
+  if (partial)
+  {
+    display.setPartialWindow(x, y, w, h);
+  }
+  else
+  {
+    display.setFullWindow();
+  }
+  display.firstPage();
+  do
+  {
+    display.fillScreen(GxEPD_WHITE);
+    display.fillRect(x, y, w, h, GxEPD_BLACK);
+  }
+  while (display.nextPage());
+  //Serial.println("showBox done");
+}
 
-//     tft.drawString(buffer, x, y, 2);
-// }
+void drawCornerTest()
+{
+  display.setFullWindow();
+  display.setFont(&FreeMonoBold9pt7b);
+  display.setTextColor(GxEPD_BLACK);
+  for (uint16_t r = 0; r <= 4; r++)
+  {
+    display.setRotation(r);
+    display.firstPage();
+    do
+    {
+      display.fillScreen(GxEPD_WHITE);
+      display.fillRect(0, 0, 8, 8, GxEPD_BLACK);
+      display.fillRect(display.width() - 18, 0, 16, 16, GxEPD_BLACK);
+      display.fillRect(display.width() - 25, display.height() - 25, 24, 24, GxEPD_BLACK);
+      display.fillRect(0, display.height() - 33, 32, 32, GxEPD_BLACK);
+      display.setCursor(display.width() / 2, display.height() / 2);
+      display.print(display.getRotation());
+    }
+    while (display.nextPage());
+    delay(2000);
+  }
+}
 
-// // ##############################################################################################
-// // Call this function to scroll the display one text line
-// // ##############################################################################################
-// int scroll_line()
-// {
-//     int yTemp = yStart; // Store the old yStart, this is where we draw the next line
-//     // Use the record of line lengths to optimise the rectangle size we need to erase the top line
-//     tft.fillRect(0, yStart, blank[(yStart - TOP_FIXED_AREA) / TEXT_HEIGHT], TEXT_HEIGHT, TFT_BLACK);
+void drawFont(const char name[], const GFXfont* f)
+{
+  //display.setRotation(0);
+  display.fillScreen(GxEPD_WHITE);
+  display.setTextColor(GxEPD_BLACK);
+  display.setFont(f);
+  display.setCursor(0, 0);
+  display.println();
+  display.println(name);
+  display.println(" !\"#$%&'()*+,-./");
+  display.println("0123456789:;<=>?");
+  display.println("@ABCDEFGHIJKLMNO");
+  display.println("PQRSTUVWXYZ[\\]^_");
+  if (display.epd2.hasColor)
+  {
+    display.setTextColor(GxEPD_RED);
+  }
+  display.println("`abcdefghijklmno");
+  display.println("pqrstuvwxyz{|}~ ");
+}
 
-//     // Change the top of the scroll area
-//     yStart += TEXT_HEIGHT;
-//     // The value must wrap around as the screen memory is a circular buffer
-//     if (yStart >= YMAX - BOT_FIXED_AREA)
-//         yStart = TOP_FIXED_AREA + (yStart - YMAX + BOT_FIXED_AREA);
-//     // Now we can scroll the display
-//     scrollAddress(yStart);
-//     return yTemp;
-// }
+void showFont(const char name[], const GFXfont* f)
+{
+  display.setFullWindow();
+  display.setRotation(0);
+  display.setTextColor(GxEPD_BLACK);
+  display.firstPage();
+  do
+  {
+    drawFont(name, f);
+  }
+  while (display.nextPage());
+}
 
-// // ##############################################################################################
-// // Setup a portion of the screen for vertical scrolling
-// // ##############################################################################################
-// // We are using a hardware feature of the display, so we can only scroll in portrait orientation
-// void setupScrollArea(uint16_t tfa, uint16_t bfa)
-// {
-//     tft.writecommand(ST7796_VSCRDEF); // Vertical scroll definition
-//     tft.writedata(tfa >> 8);          // Top Fixed Area line count
-//     tft.writedata(tfa);
-//     tft.writedata((YMAX - tfa - bfa) >> 8); // Vertical Scrolling Area line count
-//     tft.writedata(YMAX - tfa - bfa);
-//     tft.writedata(bfa >> 8); // Bottom Fixed Area line count
-//     tft.writedata(bfa);
-// }
+// note for partial update window and setPartialWindow() method:
+// partial update window size and position is on byte boundary in physical x direction
+// the size is increased in setPartialWindow() if x or w are not multiple of 8 for even rotation, y or h for odd rotation
+// see also comment in GxEPD2_BW.h, GxEPD2_3C.h or GxEPD2_GFX.h for method setPartialWindow()
+// showPartialUpdate() purposely uses values that are not multiples of 8 to test this
 
-// // ##############################################################################################
-// // Setup the vertical scrolling start address pointer
-// // ##############################################################################################
-// void scrollAddress(uint16_t vsp)
-// {
-//     tft.writecommand(ST7796_VSCRSADD); // Vertical scrolling pointer
-//     tft.writedata(vsp >> 8);
-//     tft.writedata(vsp);
-// }
+void showPartialUpdate()
+{
+  // some useful background
+  helloWorld();
+  // use asymmetric values for test
+  uint16_t box_x = 10;
+  uint16_t box_y = 15;
+  uint16_t box_w = 70;
+  uint16_t box_h = 20;
+  uint16_t cursor_y = box_y + box_h - 6;
+  float value = 13.95;
+  uint16_t incr = display.epd2.hasFastPartialUpdate ? 1 : 3;
+  display.setFont(&FreeMonoBold9pt7b);
+  display.setTextColor(GxEPD_BLACK);
+  // show where the update box is
+  for (uint16_t r = 0; r < 4; r++)
+  {
+    display.setRotation(r);
+    display.setPartialWindow(box_x, box_y, box_w, box_h);
+    display.firstPage();
+    do
+    {
+      display.fillRect(box_x, box_y, box_w, box_h, GxEPD_BLACK);
+      //display.fillScreen(GxEPD_BLACK);
+    }
+    while (display.nextPage());
+    delay(2000);
+    display.firstPage();
+    do
+    {
+      display.fillRect(box_x, box_y, box_w, box_h, GxEPD_WHITE);
+    }
+    while (display.nextPage());
+    delay(1000);
+  }
+  //return;
+  // show updates in the update box
+  for (uint16_t r = 0; r < 4; r++)
+  {
+    display.setRotation(r);
+    display.setPartialWindow(box_x, box_y, box_w, box_h);
+    for (uint16_t i = 1; i <= 10; i += incr)
+    {
+      display.firstPage();
+      do
+      {
+        display.fillRect(box_x, box_y, box_w, box_h, GxEPD_WHITE);
+        display.setCursor(box_x, cursor_y);
+        display.print(value * i, 2);
+      }
+      while (display.nextPage());
+      delay(500);
+    }
+    delay(1000);
+    display.firstPage();
+    do
+    {
+      display.fillRect(box_x, box_y, box_w, box_h, GxEPD_WHITE);
+    }
+    while (display.nextPage());
+    delay(1000);
+  }
+}
+
+#ifdef _GxBitmaps176x264_H_
+void drawBitmaps176x264()
+{
+#if !defined(__AVR)
+  const unsigned char* bitmaps[] =
+  {
+    Bitmap176x264_1, Bitmap176x264_2, Bitmap176x264_3, Bitmap176x264_4, Bitmap176x264_5
+  };
+#else
+  const unsigned char* bitmaps[] =
+  {
+    Bitmap176x264_1, Bitmap176x264_2 //, Bitmap176x264_3, Bitmap176x264_4, Bitmap176x264_5
+  };
+#endif
+  if (display.epd2.panel == GxEPD2::GDEW027W3)
+  {
+    for (uint16_t i = 0; i < sizeof(bitmaps) / sizeof(char*); i++)
+    {
+      display.firstPage();
+      do
+      {
+        display.fillScreen(GxEPD_WHITE);
+        display.drawInvertedBitmap(0, 0, bitmaps[i], display.epd2.WIDTH, display.epd2.HEIGHT, GxEPD_BLACK);
+      }
+      while (display.nextPage());
+      delay(2000);
+    }
+  }
+}
+#endif
+
+void drawBitmaps()
+{
+  display.setFullWindow();
+  drawBitmaps176x264();
+}
+
+void epaper_setup()
+{
+//   Serial.begin(115200);
+  delay(200);
+  Serial.println();
+  Serial.println("setup");
+
+// /*CS=*/ 10, /*DC=*/ 9, /*RST=*/ 11, /*BUSY=*/ 14)
+  pinMode(10, OUTPUT);
+  pinMode(9, OUTPUT);
+  pinMode(11, OUTPUT);
+  pinMode(14, INPUT);
+
+  // *** special handling for Waveshare ESP32 Driver board *** //
+  // ********************************************************* //
+#if defined(ESP32) && defined(USE_HSPI_FOR_EPD)
+  hspi.begin(12, 21, 13, 10); // remap hspi for EPD (swap pins)
+  display.epd2.selectSPI(hspi, SPISettings(1000000, MSBFIRST, SPI_MODE0));
+#endif
+  // *** end of special handling for Waveshare ESP32 Driver board *** //
+  // **************************************************************** //
+  display.init(115200, true, 5, false);
+  
+  // first update should be full refresh
+  helloWorld();
+
+    display.setCursor(40, 40);
+    display.println("test epaper"); 
+  delay(1000);
+  // partial refresh mode can be used to full screen,
+  // effective if display panel hasFastPartialUpdate
+  helloFullScreenPartialMode();
+  delay(1000);
+  helloArduino();
+  delay(1000);
+  helloEpaper();
+  delay(1000);
+  showFont("FreeMonoBold9pt7b", &FreeMonoBold9pt7b);
+  delay(1000);
+  drawBitmaps();
+  if (display.epd2.hasPartialUpdate)
+  {
+    showPartialUpdate();
+    delay(1000);
+  } // else // on GDEW0154Z04 only full update available, doesn't look nice
+  //drawCornerTest();
+  //showBox(16, 16, 48, 32, false);
+  //showBox(16, 56, 48, 32, true);
+  display.powerOff();
+//   deepSleepTest();
+  Serial.println("setup done");
+}
