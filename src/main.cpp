@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include "WiFi_BLE.h"
 #include "my_MPU6050.h"
-// #include "GUI_Driver.h"
+#include "GUI_Driver.h"
 
 #include "FreeRTOS.h"
 
@@ -26,7 +26,9 @@ void setup()
   Serial.begin(115200);
 
   pinMode(48, OUTPUT_OPEN_DRAIN);
-
+  
+  epaper_setup();
+  
   GUILog_Mutex = xSemaphoreCreateMutex();
 
   xTaskCreatePinnedToCore(IoTTaskThread, "IoTTask", 4096, NULL, 2, &IoTTaskHandle, 1);
@@ -39,6 +41,7 @@ void setup()
   // std::stringstream urlStream;
   // urlStream << "http://" << WiFi_Data.serverip << ":" << WiFi_Data.serverport;
   // Serial.printf("Try to connect %s\r\n",urlStream.str().c_str());
+
 
   // http.begin(urlStream.str().c_str()); //连接服务器对应域名
 }
