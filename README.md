@@ -26,10 +26,10 @@ base on esp32, drive an epaper device
 
 但实际上，这个电感是与MOS管一同组成了boost电路，为墨水屏驱动升压的
 
-![image-20250515100921619](/Users/nino/Documents/esp32/ePaper_IoT/assets/image-20250515100921619.png)
+![image-20250515100921619](./assets/image-20250515100921619.png)
 
 在这个驱动回路中，GDR是栅极驱动引脚，RESE是电流采样引脚
 
 共同组成了boost驱动电路，所以这个电感是不可以缺少的
 
-![image-20250515101205255](/Users/nino/Documents/esp32/ePaper_IoT/assets/image-20250515101205255.png)
+![image-20250515101205255](./assets/image-20250515101205255.png)
