@@ -17,3 +17,19 @@ base on esp32, drive an epaper device
 6. 怀疑是不是没有加滤波电感导致的，但PCB不足以飞线重做，于是重新打板。
 
 这一版本的墨水屏驱动不成功，但IIC和蓝牙/WiFi都没什么问题。
+
+
+
+### 问题定位：缺少电感元件
+
+一开始以为电感是滤波用的，与电容组成LC滤波电路
+
+但实际上，这个电感是与MOS管一同组成了boost电路，为墨水屏驱动升压的
+
+![image-20250515100921619](/Users/nino/Documents/esp32/ePaper_IoT/assets/image-20250515100921619.png)
+
+在这个驱动回路中，GDR是栅极驱动引脚，RESE是电流采样引脚
+
+共同组成了boost驱动电路，所以这个电感是不可以缺少的
+
+![image-20250515101205255](/Users/nino/Documents/esp32/ePaper_IoT/assets/image-20250515101205255.png)
